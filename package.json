@@ -1,0 +1,44 @@
+{
+  "name": "myhomebasics",
+  "version": "1.0.0",
+  "description": "Ecommerce site for MyHomeBasics",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^1.10.0",
+    "cloudinary": "^2.7.0",
+    "compression": "^1.8.0",
+    "connect-mongo": "^5.1.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.5.0",
+    "ejs": "^3.1.10",
+    "express": "^4.21.2",
+    "express-rate-limit": "^6.11.2",
+    "express-session": "^1.18.1",
+    "he": "^1.2.0",
+    "helmet": "^6.2.0",
+    "mongoose": "^6.13.8",
+    "morgan": "^1.10.0",
+    "multer": "^2.0.1",
+    "node-cron": "^4.1.1",
+    "node-telegram-bot-api": "^0.66.0",
+    "paystack-api": "^2.0.6",
+    "uuid": "^11.1.0",
+    "validator": "^13.15.15"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.29.0",
+    "autoprefixer": "^10.4.21",
+    "eslint": "^9.29.0",
+    "globals": "^16.2.0",
+    "nodemon": "^3.1.10",
+    "postcss": "^8.5.5",
+    "tailwindcss": "^4.1.10"
+  }
+}

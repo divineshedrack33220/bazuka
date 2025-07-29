@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Order Confirmation - MyHomeBasics</title>
+  <style>
+    body { font-family: 'Poppins', sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; color: #1f2937; background-color: #f3f4f6; }
+    h1 { color: #111827; font-size: 2.25rem; font-weight: 700; text-align: center; margin-bottom: 2rem; }
+    .order-details { border: 1px solid #d1d5db; padding: 20px; border-radius: 0.75rem; background-color: #ffffff; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+    h2 { color: #111827; font-size: 1.5rem; font-weight: 700; margin-bottom: 1rem; }
+    h3 { color: #374151; font-size: 1.125rem; font-weight: 600; margin-top: 1.5rem; margin-bottom: 0.5rem; }
+    p { margin-bottom: 0.75rem; font-size: 0.875rem; }
+    .order-row { display: flex; justify-content: space-between; margin-bottom: 0.5rem; font-size: 0.875rem; }
+    .order-row span:first-child { color: #374151; }
+    .order-row span:last-child { font-weight: 500; color: #111827; }
+    .order-total { font-weight: 700; font-size: 1rem; }
+    .error { color: #ef4444; font-size: 1rem; text-align: center; }
+  </style>
+</head>
+<body>
+  <h1>Order Confirmation</h1>
+  <% if (order) { %>
+    <div class="order-details">
+      <h2>Order #<%= order._id %></h2>
+      <p><strong>Name:</strong> <%= escapeHtml(order.name) %></p>
+      <p><strong>Email:</strong> <%= escapeHtml(order.email) %></p>
+      <p><strong>Phone:</strong> <%= escapeHtml(order.phone) %></p>
+      <p><strong>Address:</strong> <%= escapeHtml(order.address) %></p>
+      <p><strong>Payment Method:</strong> <%= escapeHtml(order.payment) %></p>
+      <% if (order.paymentDetails && order.payment === 'bank_transfer') { %>
+        <h3>Bank Transfer Details</h3>
+        <p><strong>Bank:</strong> <%= escapeHtml(order.paymentDetails.bankName || 'N/A') %></p>
+        <p><strong>Account Number:</strong> <%= escapeHtml(order.paymentDetails.accountNumber || 'N/A') %></p>
+        <p><strong>Reference:</strong> <%= escapeHtml(order.paymentDetails.reference) %></p>
+        <p><strong>Amount:</strong> <%= formatCurrency(order.paymentDetails.amount) %></p>
+        <p><strong>Expiry:</strong> <%= order.paymentDetails.expiry ? new Date(order.paymentDetails.expiry).toLocaleString() : 'Unknown' %></p>
+      <% } %>
+      <h3>Items</h3>
+      <% order.products.forEach(product => { %>
+        <div class="order-row">
+          <span><%= escapeHtml(product.productId ? product.productId.name : 'Unknown') %> (Qty: <%= product.quantity %>)</span>
+          <span><%= formatCurrency(product.price * product.quantity) %></span>
+        </div>
+      <% }) %>
+      <div class="order-row">
+        <span>Subtotal</span>
+        <span><%= formatCurrency(order.subtotal) %></span>
+      </div>
+      <div class="order-row">
+        <span>Delivery Fee</span>
+        <span><%= formatCurrency(order.deliveryFee) %></span>
+      </div>
+      <div class="order-row order-total">
+        <span>Total</span>
+        <span><%= formatCurrency(order.total) %></span>
+      </div>
+    </div>
+  <% } else { %>
+    <p class="error">Order not found.</p>
+  <% } %>
+</body>
+</html>

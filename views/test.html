@@ -1,0 +1,1185 @@
+const checkApiKey = (req, res, next) => {
+  const apiKey = req.header('X-API-Key');
+  if (apiKey !== (process.env.ADMIN_API_KEY || 'your-admin-api-key')) {
+    return res.status(401).json({ error: 'Unauthorized: Invalid API key' });
+  }
+  next();
+};
+
+const isAdmin = (chatId) => chatId === ADMIN_CHAT_ID;
+
+const escapeHtml = (text) => he.encode(String(text));
+
+const formatProduct = (product) => {
+  let imageList = product.images.length
+    ? product.images.map((img, i) => `Image ${i + 1}: ${escapeHtml(img)}`).join('\n')
+    : 'No images';
+  return `<b>${escapeHtml(product.name)}</b>\nPrice: ₦${product.price.toFixed(2)}\nDescription: ${escapeHtml(product.description)}\nImages:\n${imageList}\nBestseller: ${product.isBestseller ? 'Yes' : 'No'}\nID: ${product._id}${product.categoryId ? `\nCategory: ${escapeHtml(product.categoryId.name)}` : ''}`;
+};
+
+const formatCategory = (category) =>
+  `<b>${escapeHtml(category.name)}</b>\n${category.image ? `Image: ${escapeHtml(category.image)}\n` : ''}ID: ${category._id}`;
+
+const getAdminKeyboard = () => ({
+  reply_markup: {
+    keyboard: [
+      ['Add Product', 'Manage Products'],
+      ['Add Category', 'Manage Categories'],
+      ['View Orders', 'View Subscribers'],
+      ['View Testimonials', 'Manage Testimonials'],
+      ['Subscribe Newsletter'],
+    ],
+    resize_keyboard: true,
+    one_time_keyboard: false,
+  },
+});
+
+bot.on('message', async (msg) => {
+  const chatId = msg.chat.id;
+  const messageId = msg.message_id;
+  const text = msg.text || '';
+
+  if (processedMessages.has(messageId)) {
+    console.log(`[${chatId}] Skipping duplicate message ID: ${messageId}`);
+    return;
+  }
+  processedMessages.add(messageId);
+  if (processedMessages.size > 1000) {
+    processedMessages.clear();
+  }
+
+  console.log(`[${chatId}] Received message: ${text}, Photo: ${!!msg.photo}, State: ${JSON.stringify(await BotState.findOne({ chatId: chatId.toString() }))}`);
+
+  if (!isAdmin(chatId) && !['/start', '/cancel', '/subscribenewsletter', '/addtestimonial', '/viewtestimonials'].includes(text)) {
+    return bot.sendMessage(chatId, 'Unauthorized: Admin only.', { parse_mode: 'HTML' });
+  }
+
+  const state = await BotState.findOne({ chatId: chatId.toString() }) || { state: 'idle', data: {} };
+
+  if (text === '/start') {
+    await BotState.updateOne(
+      { chatId: chatId.toString() },
+      { state: 'idle', data: {}, updatedAt: Date.now() },
+      { upsert: true }
+    );
+    bot.sendMessage(chatId, 'Welcome to MyHomeBasics Admin Bot! 🛠️\nManage products, categories, orders, and more.\nUse /cancel to abort any operation.', {
+      parse_mode: 'HTML',
+      ...getAdminKeyboard(),
+    });
+  } else if (text === '/cancel') {
+    await BotState.updateOne(
+      { chatId: chatId.toString() },
+      { state: 'idle', data: {}, updatedAt: Date.now() },
+      { upsert: true }
+    );
+    bot.sendMessage(chatId, 'Operation cancelled.', {
+      parse_mode: 'HTML',
+      ...getAdminKeyboard(),
+    });
+  } else if (text === '/addtestimonial') {
+    await BotState.updateOne(
+      { chatId: chatId.toString() },
+      { state: 'add_testimonial_text', data: {}, updatedAt: Date.now() },
+      { upsert: true }
+    );
+    bot.sendMessage(chatId, 'Enter your testimonial text:', { parse_mode: 'HTML' });
+  } else if (text === '/viewtestimonials' || text === 'View Testimonials') {
+    try {
+      const testimonials = await Testimonial.find({ approved: true });
+      if (!testimonials.length) {
+        return bot.sendMessage(chatId, 'No approved testimonials found.', { parse_mode: 'HTML' });
+      }
+      let message = '<b>Testimonials:</b>\n';
+      testimonials.forEach(t => {
+        message += `User ID: ${escapeHtml(t.userId)}\nText: ${escapeHtml(t.text)}\n${t.profileImage ? `Image: ${escapeHtml(t.profileImage)}\n` : ''}Date: ${t.createdAt.toLocaleDateString()}\n\n`;
+      });
+      bot.sendMessage(chatId, message, { parse_mode: 'HTML' });
+    } catch (error) {
+      bot.sendMessage(chatId, 'Error fetching testimonials.', { parse_mode: 'HTML' });
+      console.error(`[${chatId}] View testimonials error:`, error);
+    }
+  } else if (text === 'Add Product') {
+    if (!isAdmin(chatId)) return;
+    await BotState.updateOne(
+      { chatId: chatId.toString() },
+      { state: 'add_product_name', data: {}, updatedAt: Date.now() },
+      { upsert: true }
+    );
+    bot.sendMessage(chatId, 'Enter product name:', { parse_mode: 'HTML' });
+  } else if (text === 'Manage Products') {
+    if (!isAdmin(chatId)) return;
+    try {
+      const products = await Product.find().populate('categoryId').limit(ITEMS_PER_PAGE);
+      if (!products.length) {
+        return bot.sendMessage(chatId, 'No products found.', { parse_mode: 'HTML' });
+      }
+      const buttons = products.map((product) => [
+        { text: escapeHtml(product.name), callback_data: `manage_product:${product._id}:1` },
+      ]);
+      buttons.push([{ text: 'Next', callback_data: `manage_products:2` }]);
+      bot.sendMessage(chatId, '<b>Manage Products</b>', {
+        parse_mode: 'HTML',
+        reply_markup: { inline_keyboard: buttons },
+      });
+    } catch (error) {
+      bot.sendMessage(chatId, 'Error fetching products.', { parse_mode: 'HTML' });
+      console.error(`[${chatId}] Manage products error:`, error);
+    }
+  } else if (text === 'Add Category') {
+    if (!isAdmin(chatId)) return;
+    await BotState.updateOne(
+      { chatId: chatId.toString() },
+      { state: 'add_category_name', data: {}, updatedAt: Date.now() },
+      { upsert: true }
+    );
+    bot.sendMessage(chatId, 'Enter category name:', { parse_mode: 'HTML' });
+  } else if (text === 'Manage Categories') {
+    if (!isAdmin(chatId)) return;
+    try {
+      const categories = await Category.find().limit(ITEMS_PER_PAGE);
+      if (!categories.length) {
+        return bot.sendMessage(chatId, 'No categories found.', { parse_mode: 'HTML' });
+      }
+      const buttons = categories.map((category) => [
+        { text: escapeHtml(category.name), callback_data: `manage_category:${category._id}:1` },
+      ]);
+      buttons.push([{ text: 'Next', callback_data: `manage_categories:2` }]);
+      bot.sendMessage(chatId, '<b>Manage Categories</b>', {
+        parse_mode: 'HTML',
+        reply_markup: { inline_keyboard: buttons },
+      });
+    } catch (error) {
+      bot.sendMessage(chatId, 'Error fetching categories.', { parse_mode: 'HTML' });
+      console.error(`[${chatId}] Manage categories error:`, error);
+    }
+  } else if (text === 'View Orders') {
+    if (!isAdmin(chatId)) return;
+    try {
+      const orders = await Order.find()
+        .populate('products.productId')
+        .populate('userId', 'name email phone');
+      if (!orders.length) {
+        return bot.sendMessage(chatId, 'No orders found.', { parse_mode: 'HTML' });
+      }
+      let message = '<b>Orders:</b>\n';
+      orders.forEach(order => {
+        const total = typeof order.total === 'number' ? order.total.toFixed(2) : 'N/A';
+        const userInfo = order.userId
+          ? `${escapeHtml(order.userId.name)} (${escapeHtml(order.userId.email)}${order.userId.phone ? `, ${escapeHtml(order.userId.phone)}` : ''})`
+          : 'Unknown User';
+        message += `Order ID: ${order._id}\nUser: ${userInfo}\nTotal: ₦${total}\nStatus: ${escapeHtml(order.status)}\nProducts:\n`;
+        order.products.forEach(p => {
+          const productName = p.productId ? escapeHtml(p.productId.name) : 'Unknown Product';
+          message += `- ${productName} (Qty: ${p.quantity})\n`;
+        });
+        message += `Created: ${order.createdAt.toLocaleDateString()}\n\n`;
+      });
+      bot.sendMessage(chatId, message, { parse_mode: 'HTML' });
+    } catch (error) {
+      bot.sendMessage(chatId, 'Error fetching orders.', { parse_mode: 'HTML' });
+      console.error(`[${chatId}] View orders error:`, error);
+    }
+  } else if (text === 'View Subscribers') {
+    if (!isAdmin(chatId)) return;
+    try {
+      const subscribers = await NewsletterSubscriber.find()
+        .populate('userId', 'name email phone');
+      if (!subscribers.length) {
+        return bot.sendMessage(chatId, 'No subscribers found.', { parse_mode: 'HTML' });
+      }
+      let message = '<b>Newsletter Subscribers:</b>\n';
+      subscribers.forEach(s => {
+        const userInfo = s.userId
+          ? `${escapeHtml(s.userId.name)} (${escapeHtml(s.userId.email)}${s.userId.phone ? `, ${escapeHtml(s.userId.phone)}` : ''})`
+          : 'Unknown User';
+        message += `User: ${userInfo}\nSubscribed: ${s.subscribedAt.toLocaleDateString()}\n\n`;
+      });
+      bot.sendMessage(chatId, message, { parse_mode: 'HTML' });
+    } catch (error) {
+      bot.sendMessage(chatId, 'Error fetching subscribers.', { parse_mode: 'HTML' });
+      console.error(`[${chatId}] View subscribers error:`, error);
+    }
+  } else if (text === 'Manage Testimonials') {
+    if (!isAdmin(chatId)) return;
+    try {
+      const testimonials = await Testimonial.find().sort({ createdAt: -1 }).limit(ITEMS_PER_PAGE);
+      if (!testimonials.length) {
+        return bot.sendMessage(chatId, 'No testimonials found.', { parse_mode: 'HTML' });
+      }
+      const buttons = testimonials.map((t) => [
+        { text: `${escapeHtml(t.text.substring(0, 20))}... ${t.approved ? '✅' : '⏳'}`, callback_data: `manage_testimonial:${t._id}:1` },
+      ]);
+      buttons.push([{ text: 'Next', callback_data: `manage_testimonials:2` }]);
+      bot.sendMessage(chatId, '<b>Manage Testimonials</b>', {
+        parse_mode: 'HTML',
+        reply_markup: { inline_keyboard: buttons },
+      });
+    } catch (error) {
+      bot.sendMessage(chatId, 'Error fetching testimonials.', { parse_mode: 'HTML' });
+      console.error(`[${chatId}] Manage testimonials error:`, error);
+    }
+  } else if (text === '/subscribenewsletter' || text === 'Subscribe Newsletter') {
+    try {
+      await NewsletterSubscriber.findOneAndUpdate(
+        { userId: chatId.toString() },
+        { userId: chatId.toString(), subscribedAt: Date.now() },
+        { upsert: true }
+      );
+      bot.sendMessage(chatId, 'Subscribed to newsletter!', { parse_mode: 'HTML' });
+    } catch (error) {
+      bot.sendMessage(chatId, 'Error subscribing.', { parse_mode: 'HTML' });
+      console.error(`[${chatId}] Subscribe newsletter error:`, error);
+    }
+  } else if (state.state === 'add_product_name') {
+    if (!isAdmin(chatId)) return;
+    state.data.name = text;
+    state.state = 'add_product_price';
+    await BotState.updateOne(
+      { chatId: chatId.toString() },
+      { state: state.state, data: state.data, updatedAt: Date.now() },
+      { upsert: true }
+    );
+    bot.sendMessage(chatId, 'Enter product price (e.g., 5000 or 700k for 700,000):', { parse_mode: 'HTML' });
+  } else if (state.state === 'add_product_price') {
+    if (!isAdmin(chatId)) return;
+    let price = text.toLowerCase().replace(/\s/g, '');
+    let multiplier = 1;
+    if (price.endsWith('k')) {
+      multiplier = 1000;
+      price = price.slice(0, -1);
+    } else if (price.endsWith('m')) {
+      multiplier = 1000000;
+      price = price.slice(0, -1);
+    }
+    const parsedPrice = parseFloat(price) * multiplier;
+    if (isNaN(parsedPrice) || parsedPrice <= 0) {
+      return bot.sendMessage(chatId, 'Invalid price. Enter a number (e.g., 5000 or 700k).', { parse_mode: 'HTML' });
+    }
+    state.data.price = parsedPrice;
+    state.state = 'add_product_description';
+    await BotState.updateOne(
+      { chatId: chatId.toString() },
+      { state: state.state, data: state.data, updatedAt: Date.now() },
+      { upsert: true }
+    );
+    bot.sendMessage(chatId, 'Enter product description:', { parse_mode: 'HTML' });
+  } else if (state.state === 'add_product_description') {
+    if (!isAdmin(chatId)) return;
+    state.data.description = text;
+    state.data.images = [];
+    state.state = 'add_product_image';
+    await BotState.updateOne(
+      { chatId: chatId.toString() },
+      { state: state.state, data: state.data, updatedAt: Date.now() },
+      { upsert: true }
+    );
+    bot.sendMessage(chatId, `Please upload the first product image (photo) or type "skip" to proceed without images. You can add up to ${MAX_PRODUCT_IMAGES} images.`, { parse_mode: 'HTML' });
+  } else if (state.state === 'add_product_image') {
+    if (!isAdmin(chatId)) return;
+    let imageUrl = null;
+    if (text.toLowerCase() === 'skip') {
+      console.log(`[${chatId}] User skipped first product image`);
+      state.data.images = [];
+      state.state = 'add_product_isBestseller';
+    } else if (msg.photo) {
+      console.log(`[${chatId}] Received photo: ${JSON.stringify(msg.photo)}`);
+      try {
+        const fileId = msg.photo[msg.photo.length - 1].file_id;
+        const fileLink = await bot.getFileLink(fileId);
+        console.log(`[${chatId}] File link: ${fileLink}`);
+        const timestamp = Math.floor(Date.now() / 1000);
+        let retries = 3;
+        let uploadResult = null;
+        while (retries > 0) {
+          try {
+            uploadResult = await cloudinary.uploader.upload(fileLink, {
+              folder: 'products',
+              timestamp: timestamp,
+              resource_type: 'image',
+              transformation: [{ width: 300, height: 300, crop: 'fill', quality: 'auto' }],
+            });
+            break;
+          } catch (uploadError) {
+            retries--;
+            console.error(`[${chatId}] Product image upload attempt failed (${retries} retries left):`, uploadError);
+            if (retries === 0) throw uploadError;
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          }
+        }
+        imageUrl = uploadResult.secure_url;
+        console.log(`[${chatId}] Product image uploaded to Cloudinary: ${imageUrl}`);
+        state.data.images.push(imageUrl);
+        state.state = 'add_product_image_more';
+      } catch (error) {
+        console.error(`[${chatId}] Product image upload error:`, error);
+        return bot.sendMessage(chatId, 'Error uploading image. Please try again or type "skip" to proceed without images.', { parse_mode: 'HTML' });
+      }
+    } else {
+      console.log(`[${chatId}] Invalid input: Neither photo nor 'skip'`);
+      return bot.sendMessage(chatId, 'Invalid input. Please upload a photo or type "skip" to proceed without images.', { parse_mode: 'HTML' });
+    }
+    await BotState.updateOne(
+      { chatId: chatId.toString() },
+      { state: state.state, data: state.data, updatedAt: Date.now() },
+      { upsert: true }
+    );
+    if (state.state === 'add_product_image_more') {
+      bot.sendMessage(chatId, `Image uploaded. Add another image? (${state.data.images.length}/${MAX_PRODUCT_IMAGES})\nUpload a photo, type "done" to finish, or "skip" to proceed without more images.`, { parse_mode: 'HTML' });
+    } else {
+      bot.sendMessage(chatId, 'Is it a bestseller? (yes/no):', { parse_mode: 'HTML' });
+    }
+  } else if (state.state === 'add_product_image_more') {
+    if (!isAdmin(chatId)) return;
+    if (text.toLowerCase() === 'done' || text.toLowerCase() === 'skip' || state.data.images.length >= MAX_PRODUCT_IMAGES) {
+      console.log(`[${chatId}] Finished adding images: ${state.data.images.length}`);
+      state.state = 'add_product_isBestseller';
+      await BotState.updateOne(
+        { chatId: chatId.toString() },
+        { state: state.state, data: state.data, updatedAt: Date.now() },
+        { upsert: true }
+      );
+      bot.sendMessage(chatId, 'Is it a bestseller? (yes/no):', { parse_mode: 'HTML' });
+    } else if (msg.photo) {
+      console.log(`[${chatId}] Received photo: ${JSON.stringify(msg.photo)}`);
+      try {
+        const fileId = msg.photo[msg.photo.length - 1].file_id;
+        const fileLink = await bot.getFileLink(fileId);
+        console.log(`[${chatId}] File link: ${fileLink}`);
+        const timestamp = Math.floor(Date.now() / 1000);
+        let retries = 3;
+        let uploadResult = null;
+        while (retries > 0) {
+          try {
+            uploadResult = await cloudinary.uploader.upload(fileLink, {
+              folder: 'products',
+              timestamp: timestamp,
+              resource_type: 'image',
+              transformation: [{ width: 300, height: 300, crop: 'fill', quality: 'auto' }],
+            });
+            break;
+          } catch (uploadError) {
+            retries--;
+            console.error(`[${chatId}] Product image upload attempt failed (${retries} retries left):`, uploadError);
+            if (retries === 0) throw uploadError;
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          }
+        }
+        const imageUrl = uploadResult.secure_url;
+        console.log(`[${chatId}] Product image uploaded to Cloudinary: ${imageUrl}`);
+        state.data.images.push(imageUrl);
+        await BotState.updateOne(
+          { chatId: chatId.toString() },
+          { state: state.state, data: state.data, updatedAt: Date.now() },
+          { upsert: true }
+        );
+        if (state.data.images.length < MAX_PRODUCT_IMAGES) {
+          bot.sendMessage(chatId, `Image uploaded. Add another image? (${state.data.images.length}/${MAX_PRODUCT_IMAGES})\nUpload a photo, type "done" to finish, or "skip" to proceed without more images.`, { parse_mode: 'HTML' });
+        } else {
+          state.state = 'add_product_isBestseller';
+          await BotState.updateOne(
+            { chatId: chatId.toString() },
+            { state: state.state, data: state.data, updatedAt: Date.now() },
+            { upsert: true }
+          );
+          bot.sendMessage(chatId, 'Is it a bestseller? (yes/no):', { parse_mode: 'HTML' });
+        }
+      } catch (error) {
+        console.error(`[${chatId}] Product image upload error:`, error);
+        return bot.sendMessage(chatId, `Error uploading image. Please try again, type "done" to finish, or "skip" to proceed without more images. (${state.data.images.length}/${MAX_PRODUCT_IMAGES})`, { parse_mode: 'HTML' });
+      }
+    } else {
+      console.log(`[${chatId}] Invalid input: Neither photo nor 'done'/'skip'`);
+      return bot.sendMessage(chatId, `Invalid input. Please upload a photo, type "done" to finish, or "skip" to proceed without more images. (${state.data.images.length}/${MAX_PRODUCT_IMAGES})`, { parse_mode: 'HTML' });
+    }
+  }
+  
+    else if (state.state === 'add_product_isBestseller') {
+    if (!isAdmin(chatId)) return;
+    state.data.isBestseller = text.toLowerCase() === 'yes';
+    state.state = 'add_product_confirm';
+    await BotState.updateOne(
+      { chatId: chatId.toString() },
+      { state: state.state, data: state.data, updatedAt: Date.now() },
+      { upsert: true }
+    );
+    const categories = await Category.find();
+    const categoryMessage = categories.length ? 'Select a category below or skip.' : 'No categories available. You can skip.';
+    const imageList = state.data.images.length
+      ? state.data.images.map((img, i) => `Image ${i + 1}: ${escapeHtml(img)}`).join('\n')
+      : 'No images';
+    // Log category buttons for debugging
+    console.log(`[${chatId}] Generating category buttons:`, categories.map(c => ({ name: c.name, id: c._id.toString() })));
+    bot.sendMessage(chatId, `Confirm product details:\nName: ${escapeHtml(state.data.name)}\nPrice: ₦${state.data.price.toFixed(2)}\nDescription: ${escapeHtml(state.data.description)}\nImages:\n${imageList}\nBestseller: ${state.data.isBestseller ? 'Yes' : 'No'}\n\n${categoryMessage}`, {
+      parse_mode: 'HTML',
+      reply_markup: {
+        inline_keyboard: [
+          ...categories.map(category => [{ text: escapeHtml(category.name), callback_data: `select_category:${category._id}` }]),
+          [{ text: 'Skip Category', callback_data: 'select_category:none' }],
+          [{ text: 'Confirm', callback_data: 'confirm_product' }],
+          [{ text: 'Cancel', callback_data: 'cancel_product' }],
+        ],
+      },
+    });
+  } else if (state.state === 'add_category_name') {
+    if (!isAdmin(chatId)) return;
+    state.data.name = text;
+    state.state = 'add_category_image';
+    await BotState.updateOne(
+      { chatId: chatId.toString() },
+      { state: state.state, data: state.data, updatedAt: Date.now() },
+      { upsert: true }
+    );
+    bot.sendMessage(chatId, 'Please upload a category image (photo) or type "skip" to proceed without an image.', { parse_mode: 'HTML' });
+  } else if (state.state === 'add_category_image') {
+    if (!isAdmin(chatId)) return;
+    let imageUrl = null;
+    if (text.toLowerCase() === 'skip') {
+      console.log(`[${chatId}] User skipped category image upload`);
+    } else if (msg.photo) {
+      console.log(`[${chatId}] Received photo: ${JSON.stringify(msg.photo)}`);
+      try {
+        const fileId = msg.photo[msg.photo.length - 1].file_id;
+        const fileLink = await bot.getFileLink(fileId);
+        console.log(`[${chatId}] File link: ${fileLink}`);
+        const timestamp = Math.floor(Date.now() / 1000);
+        let retries = 3;
+        let uploadResult = null;
+        while (retries > 0) {
+          try {
+            uploadResult = await cloudinary.uploader.upload(fileLink, {
+              folder: 'categories',
+              timestamp: timestamp,
+              resource_type: 'image',
+              transformation: [{ width: 200, height: 200, crop: 'fill', quality: 'auto' }],
+            });
+            break;
+          } catch (uploadError) {
+            retries--;
+            console.error(`[${chatId}] Category image upload attempt failed (${retries} retries left):`, uploadError);
+            if (retries === 0) throw uploadError;
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          }
+        }
+        imageUrl = uploadResult.secure_url;
+        console.log(`[${chatId}] Category image uploaded to Cloudinary: ${imageUrl}`);
+      } catch (error) {
+        console.error(`[${chatId}] Category image upload error:`, error);
+        return bot.sendMessage(chatId, 'Error uploading image. Please try again or type "skip" to proceed without an image.', { parse_mode: 'HTML' });
+      }
+    } else {
+      console.log(`[${chatId}] Invalid input: Neither photo nor 'skip'`);
+      return bot.sendMessage(chatId, 'Invalid input. Please upload a photo or type "skip" to proceed without an image.', { parse_mode: 'HTML' });
+    }
+    try {
+      const category = await Category.create({
+        name: state.data.name,
+        image: imageUrl,
+      });
+      await BotState.updateOne(
+        { chatId: chatId.toString() },
+        { state: 'idle', data: {}, updatedAt: Date.now() },
+        { upsert: true }
+      );
+      bot.sendMessage(chatId, `Category added: ${formatCategory(category)}`, {
+        parse_mode: 'HTML',
+        ...getAdminKeyboard(),
+      });
+    } catch (error) {
+      bot.sendMessage(chatId, 'Error adding category.', { parse_mode: 'HTML' });
+      console.error(`[${chatId}] Add category error:`, error);
+    }
+  } else if (state.state === 'edit_product_id') {
+    if (!isAdmin(chatId)) return;
+    if (!mongoose.Types.ObjectId.isValid(text)) {
+      return bot.sendMessage(chatId, 'Invalid product ID.', { parse_mode: 'HTML' });
+    }
+    const product = await Product.findById(text);
+    if (!product) {
+      return bot.sendMessage(chatId, 'Product not found.', { parse_mode: 'HTML' });
+    }
+    state.data.productId = text;
+    state.data.images = product.images || []; // Preserve current images
+    state.state = 'edit_product_name';
+    await BotState.updateOne(
+      { chatId: chatId.toString() },
+      { state: state.state, data: state.data, updatedAt: Date.now() },
+      { upsert: true }
+    );
+    bot.sendMessage(chatId, `Current name: ${escapeHtml(product.name)}\nEnter new name:`, { parse_mode: 'HTML' });
+  } else if (state.state === 'edit_product_name') {
+    if (!isAdmin(chatId)) return;
+    state.data.name = text;
+    state.state = 'edit_product_price';
+    await BotState.updateOne(
+      { chatId: chatId.toString() },
+      { state: state.state, data: state.data, updatedAt: Date.now() },
+      { upsert: true }
+    );
+    bot.sendMessage(chatId, 'Enter new price (e.g., 5000 or 700k):', { parse_mode: 'HTML' });
+  } else if (state.state === 'edit_product_price') {
+    if (!isAdmin(chatId)) return;
+    let price = text.toLowerCase().replace(/\s/g, '');
+    let multiplier = 1;
+    if (price.endsWith('k')) {
+      multiplier = 1000;
+      price = price.slice(0, -1);
+    } else if (price.endsWith('m')) {
+      multiplier = 1000000;
+      price = price.slice(0, -1);
+    }
+    const parsedPrice = parseFloat(price) * multiplier;
+    if (isNaN(parsedPrice) || parsedPrice <= 0) {
+      return bot.sendMessage(chatId, 'Invalid price. Enter a number (e.g., 5000 or 700k).', { parse_mode: 'HTML' });
+    }
+    state.data.price = parsedPrice;
+    state.state = 'edit_product_description';
+    await BotState.updateOne(
+      { chatId: chatId.toString() },
+      { state: state.state, data: state.data, updatedAt: Date.now() },
+      { upsert: true }
+    );
+    bot.sendMessage(chatId, 'Enter new description:', { parse_mode: 'HTML' });
+  } else if (state.state === 'edit_product_description') {
+    if (!isAdmin(chatId)) return;
+    state.data.description = text;
+    state.state = 'edit_product_image';
+    await BotState.updateOne(
+      { chatId: chatId.toString() },
+      { state: state.state, data: state.data, updatedAt: Date.now() },
+      { upsert: true }
+    );
+    const imageList = state.data.images.length
+      ? state.data.images.map((img, i) => `Image ${i + 1}: ${escapeHtml(img)}`).join('\n')
+      : 'No images';
+    bot.sendMessage(chatId, `Current images:\n${imageList}\nUpload a new image to replace or add (up to ${MAX_PRODUCT_IMAGES}), type "keep" to retain current images, or "skip" to clear all images.`, { parse_mode: 'HTML' });
+  } else if (state.state === 'edit_product_image') {
+    if (!isAdmin(chatId)) return;
+    let images = state.data.images || [];
+    if (text.toLowerCase() === 'keep') {
+      console.log(`[${chatId}] User kept current product images`);
+      state.state = 'edit_product_image_more';
+    } else if (text.toLowerCase() === 'skip') {
+      console.log(`[${chatId}] User cleared product images`);
+      state.data.images = [];
+      state.state = 'edit_product_isBestseller';
+    } else if (msg.photo) {
+      console.log(`[${chatId}] Received photo: ${JSON.stringify(msg.photo)}`);
+      try {
+        const fileId = msg.photo[msg.photo.length - 1].file_id;
+        const fileLink = await bot.getFileLink(fileId);
+        console.log(`[${chatId}] File link: ${fileLink}`);
+        const timestamp = Math.floor(Date.now() / 1000);
+        let retries = 3;
+        let uploadResult = null;
+        while (retries > 0) {
+          try {
+            uploadResult = await cloudinary.uploader.upload(fileLink, {
+              folder: 'products',
+              timestamp: timestamp,
+              resource_type: 'image',
+              transformation: [{ width: 300, height: 300, crop: 'fill', quality: 'auto' }],
+            });
+            break;
+          } catch (uploadError) {
+            retries--;
+            console.error(`[${chatId}] Product image upload attempt failed (${retries} retries left):`, uploadError);
+            if (retries === 0) throw uploadError;
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          }
+        }
+        const imageUrl = uploadResult.secure_url;
+        console.log(`[${chatId}] Product image uploaded to Cloudinary: ${imageUrl}`);
+        images = [imageUrl]; // Start new array
+        state.data.images = images;
+        state.state = 'edit_product_image_more';
+      } catch (error) {
+        console.error(`[${chatId}] Product image upload error:`, error);
+        return bot.sendMessage(chatId, 'Error uploading image. Please try again, type "keep" to retain current images, or "skip" to clear all images.', { parse_mode: 'HTML' });
+      }
+    } else {
+      console.log(`[${chatId}] Invalid input: Neither photo nor 'keep'/'skip'`);
+      return bot.sendMessage(chatId, 'Invalid input. Please upload a photo, type "keep" to retain current images, or "skip" to clear all images.', { parse_mode: 'HTML' });
+    }
+    await BotState.updateOne(
+      { chatId: chatId.toString() },
+      { state: state.state, data: state.data, updatedAt: Date.now() },
+      { upsert: true }
+    );
+    if (state.state === 'edit_product_image_more' && images.length < MAX_PRODUCT_IMAGES) {
+      bot.sendMessage(chatId, `Image updated. Add another image? (${images.length}/${MAX_PRODUCT_IMAGES})\nUpload a photo, type "done" to finish, or "skip" to proceed without more images.`, { parse_mode: 'HTML' });
+    } else if (state.state === 'edit_product_isBestseller') {
+      bot.sendMessage(chatId, 'Is it a bestseller? (yes/no):', { parse_mode: 'HTML' });
+    }
+  } else if (state.state === 'edit_product_image_more') {
+    if (!isAdmin(chatId)) return;
+    if (text.toLowerCase() === 'done' || text.toLowerCase() === 'skip' || state.data.images.length >= MAX_PRODUCT_IMAGES) {
+      console.log(`[${chatId}] Finished editing images: ${state.data.images.length}`);
+      state.state = 'edit_product_isBestseller';
+      await BotState.updateOne(
+        { chatId: chatId.toString() },
+        { state: state.state, data: state.data, updatedAt: Date.now() },
+        { upsert: true }
+      );
+      bot.sendMessage(chatId, 'Is it a bestseller? (yes/no):', { parse_mode: 'HTML' });
+    } else if (msg.photo) {
+      console.log(`[${chatId}] Received photo: ${JSON.stringify(msg.photo)}`);
+      try {
+        const fileId = msg.photo[msg.photo.length - 1].file_id;
+        const fileLink = await bot.getFileLink(fileId);
+        console.log(`[${chatId}] File link: ${fileLink}`);
+        const timestamp = Math.floor(Date.now() / 1000);
+        let retries = 3;
+        let uploadResult = null;
+        while (retries > 0) {
+          try {
+            uploadResult = await cloudinary.uploader.upload(fileLink, {
+              folder: 'products',
+              timestamp: timestamp,
+              resource_type: 'image',
+              transformation: [{ width: 300, height: 300, crop: 'fill', quality: 'auto' }],
+            });
+            break;
+          } catch (uploadError) {
+            retries--;
+            console.error(`[${chatId}] Product image upload attempt failed (${retries} retries left):`, uploadError);
+            if (retries === 0) throw uploadError;
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          }
+        }
+        const imageUrl = uploadResult.secure_url;
+        console.log(`[${chatId}] Product image uploaded to Cloudinary: ${imageUrl}`);
+        state.data.images.push(imageUrl);
+        await BotState.updateOne(
+          { chatId: chatId.toString() },
+          { state: state.state, data: state.data, updatedAt: Date.now() },
+          { upsert: true }
+        );
+        if (state.data.images.length < MAX_PRODUCT_IMAGES) {
+          bot.sendMessage(chatId, `Image uploaded. Add another image? (${state.data.images.length}/${MAX_PRODUCT_IMAGES})\nUpload a photo, type "done" to finish, or "skip" to proceed without more images.`, { parse_mode: 'HTML' });
+        } else {
+          state.state = 'edit_product_isBestseller';
+          await BotState.updateOne(
+            { chatId: chatId.toString() },
+            { state: state.state, data: state.data, updatedAt: Date.now() },
+            { upsert: true }
+          );
+          bot.sendMessage(chatId, 'Is it a bestseller? (yes/no):', { parse_mode: 'HTML' });
+        }
+      } catch (error) {
+        console.error(`[${chatId}] Product image upload error:`, error);
+        return bot.sendMessage(chatId, `Error uploading image. Please try again, type "done" to finish, or "skip" to proceed without more images. (${state.data.images.length}/${MAX_PRODUCT_IMAGES})`, { parse_mode: 'HTML' });
+      }
+    } else {
+      console.log(`[${chatId}] Invalid input: Neither photo nor 'done'/'skip'`);
+      return bot.sendMessage(chatId, `Invalid input. Please upload a photo, type "done" to finish, or "skip" to proceed without more images. (${state.data.images.length}/${MAX_PRODUCT_IMAGES})`, { parse_mode: 'HTML' });
+    }
+  } else if (state.state === 'edit_product_isBestseller') {
+    if (!isAdmin(chatId)) return;
+    state.data.isBestseller = text.toLowerCase() === 'yes';
+    state.state = 'edit_product_category';
+    await BotState.updateOne(
+      { chatId: chatId.toString() },
+      { state: state.state, data: state.data, updatedAt: Date.now() },
+      { upsert: true }
+    );
+    const categories = await Category.find();
+    const buttons = categories.map((category) => [
+      { text: escapeHtml(category.name), callback_data: `update_category:${category._id}` },
+    ]);
+    buttons.push([{ text: 'Skip Category', callback_data: 'update_category:none' }]);
+    bot.sendMessage(chatId, 'Select new category:', {
+      parse_mode: 'HTML',
+      reply_markup: { inline_keyboard: buttons },
+    });
+  } else if (state.state === 'edit_category_id') {
+    if (!isAdmin(chatId)) return;
+    if (!mongoose.Types.ObjectId.isValid(text)) {
+      return bot.sendMessage(chatId, 'Invalid category ID.', { parse_mode: 'HTML' });
+    }
+    const category = await Category.findById(text);
+    if (!category) {
+      return bot.sendMessage(chatId, 'Category not found.', { parse_mode: 'HTML' });
+    }
+    state.data.categoryId = text;
+    state.data.image = category.image;
+    state.state = 'edit_category_name';
+    await BotState.updateOne(
+      { chatId: chatId.toString() },
+      { state: state.state, data: state.data, updatedAt: Date.now() },
+      { upsert: true }
+    );
+    bot.sendMessage(chatId, `Current name: ${escapeHtml(category.name)}\nEnter new name:`, { parse_mode: 'HTML' });
+  } else if (state.state === 'edit_category_name') {
+    if (!isAdmin(chatId)) return;
+    state.data.name = text;
+    state.state = 'edit_category_image';
+    await BotState.updateOne(
+      { chatId: chatId.toString() },
+      { state: state.state, data: state.data, updatedAt: Date.now() },
+      { upsert: true }
+    );
+    bot.sendMessage(chatId, 'Please upload a new category image (photo) or type "skip" to keep the current image.', { parse_mode: 'HTML' });
+  } else if (state.state === 'edit_category_image') {
+    if (!isAdmin(chatId)) return;
+    let imageUrl = state.data.image;
+    if (text.toLowerCase() === 'skip') {
+      console.log(`[${chatId}] User skipped category image update`);
+    } else if (msg.photo) {
+      console.log(`[${chatId}] Received photo: ${JSON.stringify(msg.photo)}`);
+      try {
+        const fileId = msg.photo[msg.photo.length - 1].file_id;
+        const fileLink = await bot.getFileLink(fileId);
+        console.log(`[${chatId}] File link: ${fileLink}`);
+        const timestamp = Math.floor(Date.now() / 1000);
+        let retries = 3;
+        let uploadResult = null;
+        while (retries > 0) {
+          try {
+            uploadResult = await cloudinary.uploader.upload(fileLink, {
+              folder: 'categories',
+              timestamp: timestamp,
+              resource_type: 'image',
+              transformation: [{ width: 200, height: 200, crop: 'fill', quality: 'auto' }],
+            });
+            break;
+          } catch (uploadError) {
+            retries--;
+            console.error(`[${chatId}] Category image upload attempt failed (${retries} retries left):`, uploadError);
+            if (retries === 0) throw uploadError;
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          }
+        }
+        imageUrl = uploadResult.secure_url;
+        console.log(`[${chatId}] Category image uploaded to Cloudinary: ${imageUrl}`);
+      } catch (error) {
+        console.error(`[${chatId}] Category image upload error:`, error);
+        return bot.sendMessage(chatId, 'Error uploading image. Please try again or type "skip" to keep the current image.', { parse_mode: 'HTML' });
+      }
+    } else {
+      console.log(`[${chatId}] Invalid input: Neither photo nor 'skip'`);
+      return bot.sendMessage(chatId, 'Invalid input. Please upload a photo or type "skip" to keep the current image.', { parse_mode: 'HTML' });
+    }
+    try {
+      const category = await Category.findByIdAndUpdate(
+        state.data.categoryId,
+        { name: state.data.name, image: imageUrl },
+        { new: true }
+      );
+      await BotState.updateOne(
+        { chatId: chatId.toString() },
+        { state: 'idle', data: {}, updatedAt: Date.now() },
+        { upsert: true }
+      );
+      bot.sendMessage(chatId, `Category updated: ${formatCategory(category)}`, {
+        parse_mode: 'HTML',
+        ...getAdminKeyboard(),
+      });
+    } catch (error) {
+      bot.sendMessage(chatId, 'Error updating category.', { parse_mode: 'HTML' });
+      console.error(`[${chatId}] Update category error:`, error);
+    }
+  } else if (state.state === 'delete_category_id') {
+    if (!isAdmin(chatId)) return;
+    if (!mongoose.Types.ObjectId.isValid(text)) {
+      return bot.sendMessage(chatId, 'Invalid category ID.', { parse_mode: 'HTML' });
+    }
+    try {
+      const category = await Category.findByIdAndDelete(text);
+      if (!category) {
+        return bot.sendMessage(chatId, 'Category not found.', { parse_mode: 'HTML' });
+      }
+      await Product.updateMany({ categoryId: text }, { $unset: { categoryId: '' } });
+      await BotState.updateOne(
+        { chatId: chatId.toString() },
+        { state: 'idle', data: {}, updatedAt: Date.now() },
+        { upsert: true }
+      );
+      bot.sendMessage(chatId, `Category deleted: ${category.name}`, {
+        parse_mode: 'HTML',
+        ...getAdminKeyboard(),
+      });
+    } catch (error) {
+      bot.sendMessage(chatId, 'Error deleting category.', { parse_mode: 'HTML' });
+      console.error(`[${chatId}] Delete category error:`, error);
+    }
+  } else if (state.state === 'add_testimonial_text') {
+    state.data.text = text;
+    state.state = 'add_testimonial_image';
+    await BotState.updateOne(
+      { chatId: chatId.toString() },
+      { state: state.state, data: state.data, updatedAt: Date.now() },
+      { upsert: true }
+    );
+    bot.sendMessage(chatId, 'Please upload a profile image (photo) or type "skip" to proceed without an image.', { parse_mode: 'HTML' });
+  } else if (state.state === 'add_testimonial_image') {
+    let imageUrl = null;
+    if (text.toLowerCase() === 'skip') {
+      console.log(`[${chatId}] User skipped testimonial image upload`);
+    } else if (msg.photo) {
+      console.log(`[${chatId}] Received photo: ${JSON.stringify(msg.photo)}`);
+      try {
+        const fileId = msg.photo[msg.photo.length - 1].file_id;
+        const fileLink = await bot.getFileLink(fileId);
+        console.log(`[${chatId}] File link: ${fileLink}`);
+        const timestamp = Math.floor(Date.now() / 1000);
+        let retries = 3;
+        let uploadResult = null;
+        while (retries > 0) {
+          try {
+            uploadResult = await cloudinary.uploader.upload(fileLink, {
+              folder: 'testimonials',
+              timestamp: timestamp,
+              resource_type: 'image',
+              transformation: [{ width: 100, height: 100, crop: 'fill', quality: 'auto' }],
+            });
+            break;
+          } catch (uploadError) {
+            retries--;
+            console.error(`[${chatId}] Testimonial image upload attempt failed (${retries} retries left):`, uploadError);
+            if (retries === 0) throw uploadError;
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          }
+        }
+        imageUrl = uploadResult.secure_url;
+        console.log(`[${chatId}] Testimonial image uploaded to Cloudinary: ${imageUrl}`);
+      } catch (error) {
+        console.error(`[${chatId}] Testimonial image upload error:`, error);
+        return bot.sendMessage(chatId, 'Error uploading image. Please try again or type "skip" to proceed without an image.', { parse_mode: 'HTML' });
+      }
+    } else {
+      console.log(`[${chatId}] Invalid input: Neither photo nor 'skip'`);
+      return bot.sendMessage(chatId, 'Invalid input. Please upload a photo or type "skip" to proceed without an image.', { parse_mode: 'HTML' });
+    }
+    try {
+      const testimonial = await Testimonial.create({
+        userId: chatId.toString(),
+        text: state.data.text,
+        profileImage: imageUrl,
+        approved: isAdmin(chatId),
+      });
+      console.log(`[${chatId}] Testimonial created: ${testimonial._id}`);
+      await BotState.updateOne(
+        { chatId: chatId.toString() },
+        { state: 'idle', data: {}, updatedAt: Date.now() },
+        { upsert: true }
+      );
+      bot.sendMessage(chatId, `Testimonial ${isAdmin(chatId) ? 'added' : 'submitted for approval'}.`, {
+        parse_mode: 'HTML',
+        ...getAdminKeyboard(),
+      });
+    } catch (error) {
+      console.error(`[${chatId}] Add testimonial error:`, error);
+      bot.sendMessage(chatId, 'Error submitting testimonial.', { parse_mode: 'HTML' });
+    }
+  } else if (!text.startsWith('/')) {
+    bot.sendMessage(chatId, 'Unknown command. Use the buttons or /start.', {
+      parse_mode: 'HTML',
+      ...getAdminKeyboard(),
+    });
+  }
+});
+
+bot.on('callback_query', async (query) => {
+  const chatId = query.message.chat.id;
+  if (!isAdmin(chatId)) {
+    await bot.answerCallbackQuery(query.id);
+    return bot.sendMessage(chatId, 'Unauthorized.', { parse_mode: 'HTML' });
+  }
+  const [action, ...params] = query.data.split(':');
+  const callbackData = query.data; // For logging
+  await bot.answerCallbackQuery(query.id);
+  try {
+    const state = await BotState.findOne({ chatId: chatId.toString() });
+    console.log(`[${chatId}] Callback query: ${callbackData}, State: ${state?.state || 'none'}`);
+    if (action === 'select_category') {
+      const [categoryId] = params;
+      if (!state || state.state !== 'add_product_confirm') {
+        console.log(`[${chatId}] Invalid state for select_category: ${state?.state || 'none'}`);
+        return bot.sendMessage(chatId, 'Invalid state. Please start over with /start.', { parse_mode: 'HTML' });
+      }
+      // Validate categoryId
+      if (categoryId !== 'none' && !mongoose.Types.ObjectId.isValid(categoryId)) {
+        console.error(`[${chatId}] Invalid categoryId: ${categoryId}`);
+        return bot.sendMessage(chatId, 'Invalid category selected. Please try again.', { parse_mode: 'HTML' });
+      }
+      state.data.categoryId = categoryId !== 'none' ? categoryId : null;
+      await BotState.updateOne(
+        { chatId: chatId.toString() },
+        { state: state.state, data: state.data, updatedAt: Date.now() },
+        { upsert: true }
+      );
+      bot.sendMessage(chatId, 'Category selected. Please confirm or cancel.', {
+        parse_mode: 'HTML',
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: 'Confirm', callback_data: 'confirm_product' }],
+            [{ text: 'Cancel', callback_data: 'cancel_product' }],
+          ],
+        },
+      });
+    } else if (action === 'confirm_product') {
+      if (!state || state.state !== 'add_product_confirm') {
+        console.log(`[${chatId}] Invalid state for confirm_product: ${state?.state || 'none'}`);
+        return bot.sendMessage(chatId, 'Invalid state. Please start over with /start.', { parse_mode: 'HTML' });
+      }
+      // Validate categoryId before creating product
+      if (state.data.categoryId && !mongoose.Types.ObjectId.isValid(state.data.categoryId)) {
+        console.error(`[${chatId}] Invalid categoryId in confirm_product: ${state.data.categoryId}`);
+        return bot.sendMessage(chatId, 'Invalid category ID. Please select a category again or skip.', { parse_mode: 'HTML' });
+      }
+      console.log(`[${chatId}] Creating product with data:`, {
+        name: state.data.name,
+        price: state.data.price,
+        description: state.data.description,
+        images: state.data.images,
+        isBestseller: state.data.isBestseller,
+        categoryId: state.data.categoryId,
+      });
+      const product = await Product.create({
+        name: state.data.name,
+        price: state.data.price,
+        description: state.data.description,
+        images: state.data.images,
+        isBestseller: state.data.isBestseller,
+        categoryId: state.data.categoryId || null,
+      });
+      await BotState.updateOne(
+        { chatId: chatId.toString() },
+        { state: 'idle', data: {}, updatedAt: Date.now() },
+        { upsert: true }
+      );
+      bot.sendMessage(chatId, `Product added: ${formatProduct(product)}`, {
+        parse_mode: 'HTML',
+        ...getAdminKeyboard(),
+      });
+    } else if (action === 'cancel_product') {
+      if (!state || state.state !== 'add_product_confirm') {
+        console.log(`[${chatId}] Invalid state for cancel_product: ${state?.state || 'none'}`);
+        return bot.sendMessage(chatId, 'Invalid state. Please start over with /start.', { parse_mode: 'HTML' });
+      }
+      await BotState.updateOne(
+        { chatId: chatId.toString() },
+        { state: 'idle', data: {}, updatedAt: Date.now() },
+        { upsert: true }
+      );
+      bot.sendMessage(chatId, 'Product addition cancelled.', {
+        parse_mode: 'HTML',
+        ...getAdminKeyboard(),
+      });
+    } else if (action === 'manage_product') {
+      const [productId, page] = params;
+      const product = await Product.findById(productId).populate('categoryId');
+      if (!product) {
+        return bot.sendMessage(chatId, 'Product not found.', { parse_mode: 'HTML' });
+      }
+      const buttons = [
+        [{ text: 'Edit', callback_data: `edit_product:${productId}` }],
+        [{ text: 'Delete', callback_data: `delete_product:${productId}` }],
+      ];
+      bot.sendMessage(chatId, formatProduct(product), {
+        parse_mode: 'HTML',
+        reply_markup: { inline_keyboard: buttons },
+      });
+    } else if (action === 'manage_products') {
+      const [page] = params;
+      const total = await Product.countDocuments();
+      const products = await Product.find()
+        .populate('categoryId')
+        .skip((parseInt(page) - 1) * ITEMS_PER_PAGE)
+        .limit(ITEMS_PER_PAGE);
+      if (!products.length) {
+        return bot.sendMessage(chatId, 'No more products.', { parse_mode: 'HTML' });
+      }
+      const buttons = products.map(p => [
+        { text: escapeHtml(p.name), callback_data: `manage_product:${p._id}:${page}` },
+      ]);
+      if (parseInt(page) > 1) {
+        buttons.push([{ text: 'Previous', callback_data: `manage_products:${parseInt(page) - 1}` }]);
+      }
+      if (parseInt(page) * ITEMS_PER_PAGE < total) {
+        buttons.push([{ text: 'Next', callback_data: `manage_products:${parseInt(page) + 1}` }]);
+      }
+      bot.sendMessage(chatId, '<b>Manage Products</b>', {
+        parse_mode: 'HTML',
+        reply_markup: { inline_keyboard: buttons },
+      });
+    } else if (action === 'edit_product') {
+      const [productId] = params;
+      await BotState.updateOne(
+        { chatId: chatId.toString() }, // Fixed typo: chartId → chatId
+        { state: 'edit_product_id', data: { productId }, updatedAt: Date.now() },
+        { upsert: true }
+      );
+      bot.sendMessage(chatId, `Enter new details for product ID: ${productId}`, { parse_mode: 'HTML' });
+    } else if (action === 'delete_product') {
+      const [productId] = params;
+      const product = await Product.findByIdAndDelete(productId);
+      if (!product) {
+        return bot.sendMessage(chatId, 'Product not found.', { parse_mode: 'HTML' });
+      }
+      bot.sendMessage(chatId, `Product deleted: ${escapeHtml(product.name)}`, {
+        parse_mode: 'HTML',
+        ...getAdminKeyboard(),
+      });
+    } else if (action === 'update_category') {
+      const [categoryId] = params;
+      if (!state || state.state !== 'edit_product_category') {
+        console.log(`[${chatId}] Invalid state for update_category: ${state?.state || 'none'}`);
+        return bot.sendMessage(chatId, 'Invalid state. Please start over with /start.', { parse_mode: 'HTML' });
+      }
+      // Validate categoryId
+      if (categoryId !== 'none' && !mongoose.Types.ObjectId.isValid(categoryId)) {
+        console.error(`[${chatId}] Invalid categoryId in update_category: ${categoryId}`);
+        return bot.sendMessage(chatId, 'Invalid category ID. Please select a category again.', { parse_mode: 'HTML' });
+      }
+      console.log(`[${chatId}] Updating product with data:`, {
+        productId: state.data.productId,
+        name: state.data.name,
+        price: state.data.price,
+        description: state.data.description,
+        images: state.data.images,
+        isBestseller: state.data.isBestseller,
+        categoryId: categoryId !== 'none' ? categoryId : null,
+      });
+      const product = await Product.findByIdAndUpdate(
+        state.data.productId,
+        {
+          name: state.data.name,
+          price: parseFloat(state.data.price),
+          description: state.data.description,
+          images: state.data.images,
+          isBestseller: state.data.isBestseller,
+          categoryId: categoryId !== 'none' ? categoryId : null,
+        },
+        { new: true }
+      ).populate('categoryId');
+      await BotState.updateOne(
+        { chatId: chatId.toString() },
+        { state: 'idle', data: {}, updatedAt: Date.now() },
+        { upsert: true }
+      );
+      bot.sendMessage(chatId, `Product updated: ${formatProduct(product)}`, {
+        parse_mode: 'HTML',
+        ...getAdminKeyboard(),
+      });
+    } else if (action === 'manage_category') {
+      const [categoryId, page] = params;
+      const category = await Category.findById(categoryId);
+      if (!category) {
+        return bot.sendMessage(chatId, 'Category not found.', { parse_mode: 'HTML' });
+      }
+      const buttons = [
+        [{ text: 'Edit', callback_data: `edit_category:${categoryId}` }],
+        [{ text: 'Delete', callback_data: `delete_category:${categoryId}` }],
+      ];
+      bot.sendMessage(chatId, formatCategory(category), {
+        parse_mode: 'HTML',
+        reply_markup: { inline_keyboard: buttons },
+      });
+    } else if (action === 'manage_categories') {
+      const [page] = params;
+      const total = await Category.countDocuments();
+      const categories = await Category.find()
+        .skip((parseInt(page) - 1) * ITEMS_PER_PAGE)
+        .limit(ITEMS_PER_PAGE);
+      if (!categories.length) {
+        return bot.sendMessage(chatId, 'No more categories.', { parse_mode: 'HTML' });
+      }
+      const buttons = categories.map(c => [
+        { text: escapeHtml(c.name), callback_data: `manage_category:${c._id}:${page}` },
+      ]);
+      if (parseInt(page) > 1) {
+        buttons.push([{ text: 'Previous', callback_data: `manage_categories:${parseInt(page) - 1}` }]);
+      }
+      if (parseInt(page) * ITEMS_PER_PAGE < total) {
+        buttons.push([{ text: 'Next', callback_data: `manage_categories:${parseInt(page) + 1}` }]);
+      }
+      bot.sendMessage(chatId, '<b>Manage Categories</b>', {
+        parse_mode: 'HTML',
+        reply_markup: { inline_keyboard: buttons },
+      });
+    } else if (action === 'edit_category') {
+      const [categoryId] = params;
+      await BotState.updateOne(
+        { chatId: chatId.toString() },
+        { state: 'edit_category_id', data: { categoryId }, updatedAt: Date.now() },
+        { upsert: true }
+      );
+      bot.sendMessage(chatId, `Enter new details for category ID: ${categoryId}`, { parse_mode: 'HTML' });
+    } else if (action === 'delete_category') {
+      const [categoryId] = params;
+      const category = await Category.findByIdAndDelete(categoryId);
+      if (!category) {
+        return bot.sendMessage(chatId, 'Category not found.', { parse_mode: 'HTML' });
+      }
+      await Product.updateMany({ categoryId }, { $unset: { categoryId: '' } });
+      bot.sendMessage(chatId, `Category deleted: ${escapeHtml(category.name)}`, {
+        parse_mode: 'HTML',
+        ...getAdminKeyboard(),
+      });
+    } else if (action === 'manage_testimonial') {
+      const [testimonialId, page] = params;
+      const testimonial = await Testimonial.findById(testimonialId);
+      if (!testimonial) {
+        return bot.sendMessage(chatId, 'Testimonial not found.', { parse_mode: 'HTML' });
+      }
+      const buttons = [
+        [{ text: 'Approve', callback_data: `approve_testimonial:${testimonialId}` }],
+        [{ text: 'Delete', callback_data: `delete_testimonial:${testimonialId}` }],
+      ];
+      bot.sendMessage(chatId, `Testimonial: ${escapeHtml(testimonial.text)}\nUser ID: ${escapeHtml(testimonial.userId)}\n${testimonial.profileImage ? `Image: ${testimonial.profileImage}\n` : ''}Status: ${testimonial.approved ? 'Approved' : 'Pending'}`, {
+        parse_mode: 'HTML',
+        reply_markup: { inline_keyboard: buttons },
+      });
+    } else if (action === 'manage_testimonials') {
+      const [page] = params;
+      const total = await Testimonial.countDocuments();
+      const testimonials = await Testimonial.find()
+        .sort({ createdAt: -1 })
+        .skip((parseInt(page) - 1) * ITEMS_PER_PAGE)
+        .limit(ITEMS_PER_PAGE);
+      if (!testimonials.length) {
+        return bot.sendMessage(chatId, 'No more testimonials.', { parse_mode: 'HTML' });
+      }
+      const buttons = testimonials.map(t => [
+        { text: `${escapeHtml(t.text.substring(0, 20))}... ${t.approved ? '✅' : '⏳'}`, callback_data: `manage_testimonial:${t._id}:${page}` },
+      ]);
+      if (parseInt(page) > 1) {
+        buttons.push([{ text: 'Previous', callback_data: `manage_testimonials:${parseInt(page) - 1}` }]);
+      }
+      if (parseInt(page) * ITEMS_PER_PAGE < total) {
+        buttons.push([{ text: 'Next', callback_data: `manage_testimonials:${parseInt(page) + 1}` }]);
+      }
+      bot.sendMessage(chatId, '<b>Manage Testimonials</b>', {
+        parse_mode: 'HTML',
+        reply_markup: { inline_keyboard: buttons },
+      });
+    } else if (action === 'approve_testimonial') {
+      const [testimonialId] = params;
+      const testimonial = await Testimonial.findByIdAndUpdate(testimonialId, { approved: true }, { new: true });
+      if (!testimonial) {
+        return bot.sendMessage(chatId, 'Testimonial not found.', { parse_mode: 'HTML' });
+      }
+      bot.sendMessage(chatId, `Testimonial approved: ${escapeHtml(testimonial.text)}`, {
+        parse_mode: 'HTML',
+        ...getAdminKeyboard(),
+      });
+    } else if (action === 'delete_testimonial') {
+      const [testimonialId] = params;
+      const testimonial = await Testimonial.findByIdAndDelete(testimonialId);
+      if (!testimonial) {
+        return bot.sendMessage(chatId, 'Testimonial not found.', { parse_mode: 'HTML' });
+      }
+      bot.sendMessage(chatId, `Testimonial deleted: ${escapeHtml(testimonial.text)}`, {
+        parse_mode: 'HTML',
+        ...getAdminKeyboard(),
+      });
+    } else {
+      console.log(`[${chatId}] Unknown callback action: ${action}`);
+      bot.sendMessage(chatId, 'Unknown action. Please try again.', { parse_mode: 'HTML' });
+    }
+  } catch (error) {
+    console.error(`[${chatId}] Callback query error:`, error);
+    bot.sendMessage(chatId, 'Error processing request.', { parse_mode: 'HTML' });
+  }
+});
