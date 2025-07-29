@@ -248,7 +248,7 @@ app.use(
 app.use(compression());
 app.use(
   cors({
-    origin: process.env.NODE_ENV === 'production' ? 'https://bazuka.com' : 'http://localhost:4000',
+    origin: process.env.NODE_ENV === 'production' ? 'https://bazuka.onrender.com/' : 'http://localhost:4000',
     methods: ['GET', 'POST', 'PUT', 'DELETE'],
     credentials: true,
   })
@@ -355,7 +355,7 @@ app.use((req, res, next) => {
     "font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com; " +
     "script-src 'self' 'unsafe-inline'; " +
     "img-src 'self' https: data:; " +
-    "connect-src 'self' http://localhost:4000 https://bazuka.com https://api.opayweb.com; " +
+    "connect-src 'self' http://localhost:4000 https://bazuka.onrender.com/ https://api.opayweb.com; " +
     "frame-src 'self' https://api.opayweb.com"
   );
   next();
@@ -2698,7 +2698,7 @@ const connectWithRetry = async () => {
   let retries = 5;
   while (retries) {
     try {
-      await mongoose.connect('mongodb://127.0.0.1:27017/bazuka', {
+      await mongoose.connect('mongodb+srv://divineshedrack1:US4uTv5BL92SoLxX@cluster0.prx1c.mongodb.net/bazuka?retryWrites=true&w=majority', {
         serverSelectionTimeoutMS: 5000,
       });
       console.log('Connected to MongoDB');
