@@ -260,7 +260,7 @@ app.use(
     resave: false,
     saveUninitialized: false,
     store: MongoStore.create({
-      mongoUrl: 'mongodb://127.0.0.1:27017/bazuka',
+      mongoUrl: 'mongodb+srv://12:divine11@cluster0.rglgrrn.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0',
       collectionName: 'sessions',
     }),
     cookie: {
@@ -2698,7 +2698,7 @@ const connectWithRetry = async () => {
   let retries = 5;
   while (retries) {
     try {
-      await mongoose.connect('mongodb+srv://divineshedrack1:US4uTv5BL92SoLxX@cluster0.prx1c.mongodb.net/bazuka?retryWrites=true&w=majority', {
+      await mongoose.connect('mongodb+srv://12:divine11@cluster0.rglgrrn.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0', {
         serverSelectionTimeoutMS: 5000,
       });
       console.log('Connected to MongoDB');
